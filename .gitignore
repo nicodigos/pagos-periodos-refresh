@@ -34,7 +34,6 @@ data_comparison/__pycache__/
 # Local workbook and sample data
 Pagos Periodos.xlsm
 Pagos Periodos - Copy.xlsm
-sample.xlsx
 sample_db.csv
 
 # Build / packaging

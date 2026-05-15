@@ -227,7 +227,10 @@ def work98_template_bytes(token: str | None = None) -> bytes:
 
     local_path = local_work98_template_path()
     if not local_path.exists():
-        raise RuntimeError(f"Work98 template not found: {local_path}")
+        raise RuntimeError(
+            f"Work98 template not found: {local_path}. "
+            "Add the template file to the deployment or configure WORK98_TEMPLATE_PATH in secrets."
+        )
     return local_path.read_bytes()
 
 
