@@ -248,18 +248,34 @@ def write_temp_file(filename: str, content: bytes) -> str:
     return str(local)
 
 
-def parse_mysql_connection_config() -> dict:
+def connection_setting_name(base_name: str, mode: str) -> str:
+    if mode == "read":
+        return f"{base_name}_READ"
+    if mode == "write":
+        return f"{base_name}_WRITE"
+    return base_name
+
+
+def get_connection_setting(base_name: str, mode: str, default: Any = "") -> Any:
+    value = get_setting(connection_setting_name(base_name, mode), None)
+    if value is not None and str(value).strip() != "":
+        return value
+    return get_setting(base_name, default)
+
+
+def parse_mysql_connection_config(mode: str = "read") -> dict:
     local_dsn = str(get_setting("LOCAL_MYSQL_DSN", "")).strip()
     env = str(get_setting("ENV", "development")).strip()
 
     if env == "development" and local_dsn:
         return parse_local_mysql_dsn(local_dsn)
 
-    host = str(get_setting("DB_HOST", "")).strip()
-    port = get_int_setting("DB_PORT", 3306)
-    user = str(get_setting("DB_USER", "")).strip()
-    password = str(get_setting("DB_PASS", ""))
-    database = str(get_setting("DB_NAME", "")).strip()
+    host = str(get_connection_setting("DB_HOST", mode, "")).strip()
+    port_value = get_connection_setting("DB_PORT", mode, 3306)
+    port = int(str(port_value).strip() or "3306")
+    user = str(get_connection_setting("DB_USER", mode, "")).strip()
+    password = str(get_connection_setting("DB_PASS", mode, ""))
+    database = str(get_connection_setting("DB_NAME", mode, "")).strip()
     if not all([host, user, password, database]):
         raise RuntimeError("Missing DB_HOST / DB_PORT / DB_USER / DB_PASS / DB_NAME")
 
@@ -290,7 +306,7 @@ def is_ssh_tunnel_enabled() -> bool:
     return get_bool_setting("SSH_TUNNEL_ENABLED", False)
 
 
-def build_ssh_tunnel() -> Any:
+def build_ssh_tunnel(mode: str = "read") -> Any:
     try:
         from sshtunnel import SSHTunnelForwarder
     except ModuleNotFoundError as exc:
@@ -306,15 +322,15 @@ def build_ssh_tunnel() -> Any:
     ssh_key_path = str(get_setting("SSH_TUNNEL_KEY_PATH", "")).strip()
     ssh_key_passphrase = str(get_setting("SSH_TUNNEL_KEY_PASSPHRASE", ""))
     ssh_private_key = str(get_setting("SSH_TUNNEL_PRIVATE_KEY", ""))
-    remote_host = (
-        str(get_setting("SSH_TUNNEL_REMOTE_HOST", "")).strip()
-        or str(get_setting("DB_HOST", "")).strip()
-        or "127.0.0.1"
-    )
-    remote_port = get_int_setting(
+    remote_host = str(get_connection_setting("SSH_TUNNEL_REMOTE_HOST", mode, "")).strip() or str(
+        get_connection_setting("DB_HOST", mode, "")
+    ).strip() or "127.0.0.1"
+    remote_port_value = get_connection_setting(
         "SSH_TUNNEL_REMOTE_PORT",
-        get_int_setting("DB_PORT", 3306),
+        mode,
+        get_connection_setting("DB_PORT", mode, 3306),
     )
+    remote_port = int(str(remote_port_value).strip() or "3306")
     local_host = str(get_setting("SSH_TUNNEL_LOCAL_HOST", "127.0.0.1")).strip() or "127.0.0.1"
 
     if not all([ssh_host, ssh_user, remote_host]):
@@ -352,13 +368,13 @@ def build_ssh_tunnel() -> Any:
 
 
 @contextmanager
-def mysql_connection():
-    config = parse_mysql_connection_config()
+def mysql_connection(mode: str = "read"):
+    config = parse_mysql_connection_config(mode=mode)
     tunnel = None
 
     try:
         if is_ssh_tunnel_enabled():
-            tunnel = build_ssh_tunnel()
+            tunnel = build_ssh_tunnel(mode=mode)
             config["host"] = "127.0.0.1"
             config["port"] = int(tunnel.local_bind_port)
 
@@ -431,7 +447,7 @@ def sync_pagos_periodos_lookup_tables(token: str) -> dict[str, int]:
     )
     workbook_data = parse_pagos_periodos_workbook(workbook_bytes)
 
-    with mysql_connection() as connection:
+    with mysql_connection(mode="write") as connection:
         try:
             with connection.cursor() as cursor:
                 replace_lookup_table(
