@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment and local config
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated exports and local validation artifacts
+data/*.xlsx
+data/*.csv
+data_comparison/*.xlsx
+data_comparison/*.csv
+data_comparison/validation_report.*
+data_comparison/__pycache__/
+
+# Local workbook and sample data
+Pagos Periodos.xlsm
+Pagos Periodos - Copy.xlsm
+sample.xlsx
+sample_db.csv
+
+# Build / packaging
+*.egg-info/
+build/
+dist/
