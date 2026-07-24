@@ -18,6 +18,9 @@ from utils.settings import get_bool_setting, get_setting
 
 WORK98_TEMPLATE_SHEET_NAME = "Work98"
 DATA_TEMPLATE_SHEET_NAME = "Data"
+PAGOS_PERIODOS_BALANCE_SHEET_NAME = "Pagos Periodos"
+TICKETS_BALANCE_SHEET_NAME = "Tickets"
+BANK_PERIODICS_BALANCE_SHEET_NAME = "Bank Periodics"
 WORK98_OUTPUT_PREFIX = "Work"
 WORK98_LINE_START_ROW = 6
 WORK98_LINE_END_ROW = 205
@@ -38,6 +41,21 @@ DATA_HEADERS = (
     "Category",
     "Type of work",
     "Vendor Company",
+)
+BALANCE_HEADERS = (
+    "Type of paiement",
+    "Employee number",
+    "Name employee",
+    "Vendor Company",
+    "Category",
+    "Rows",
+    "Total hours worked",
+    "Total to pay",
+)
+BALANCE_SHEET_NAMES = (
+    PAGOS_PERIODOS_BALANCE_SHEET_NAME,
+    TICKETS_BALANCE_SHEET_NAME,
+    BANK_PERIODICS_BALANCE_SHEET_NAME,
 )
 DEFAULT_SOURCE_TIMEZONE = "UTC"
 DEFAULT_BUILDING_TIMEZONE = "America/Toronto"
@@ -653,8 +671,11 @@ def find_building_lookup(job: dict[str, Any], buildings: dict[str, dict[str, str
 
 
 def employee_display_for_job(job: dict[str, Any], contractors: dict[str, dict[str, str]]) -> str:
-    contractor = find_contractor_lookup(job, contractors)
-    return contractor_display_name(job, contractor)
+    cnetbms_name = app_employee_name(job)
+    pagos_periodos_name = str(job.get("assigned_user_pagos_periodos_id") or "").strip()
+    if cnetbms_name and pagos_periodos_name:
+        return f"{cnetbms_name} ({pagos_periodos_name})"
+    return cnetbms_name or pagos_periodos_name
 
 
 def ordered_plan_groups(
@@ -849,7 +870,7 @@ def populate_work98_rows(
 
         display_date = start_time.date() if start_time else (scheduled_start_time.date() if scheduled_start_time else None)
         set_cell_value(ws.cell(row=row_number, column=2), display_date)
-        set_cell_value(ws.cell(row=row_number, column=3), contractor_display_name(job, contractor))
+        set_cell_value(ws.cell(row=row_number, column=3), employee_display_for_job(job, contractors))
         set_cell_value(ws.cell(row=row_number, column=4), start_time if start_time else None)
         set_cell_value(ws.cell(row=row_number, column=5), end_time if end_time else None)
         ws.cell(row=row_number, column=6).value = f'=IF(OR(D{row_number}="",E{row_number}=""),"",E{row_number}-D{row_number})'
@@ -994,10 +1015,126 @@ def populate_data_sheet(ws, data_rows: list[list[Any]]) -> None:
         ws.cell(row=row_offset, column=10).number_format = "0.00"
 
 
+def balance_category(data_row: list[Any]) -> str:
+    row = dict(zip(DATA_HEADERS, data_row))
+    combined = normalize_lookup_key(
+        " ".join(
+            str(row.get(header) or "")
+            for header in (
+                "Building",
+                "Building & vendor company",
+                "Type of work",
+                "Vendor Company",
+            )
+        )
+    )
+    type_of_work = normalize_lookup_key(str(row.get("Type of work") or ""))
+
+    if "bank periodic" in combined or "banks periodic" in combined or ("bank" in combined and "periodic" in combined):
+        return BANK_PERIODICS_BALANCE_SHEET_NAME
+    if any(term in type_of_work for term in ("one shot", "oneshot", "ticket", "service call", "project work", "project")):
+        return TICKETS_BALANCE_SHEET_NAME
+    return PAGOS_PERIODOS_BALANCE_SHEET_NAME
+
+
+def build_balance_rows(data_rows: list[list[Any]], category: str) -> list[list[Any]]:
+    grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    for data_row in data_rows:
+        if balance_category(data_row) != category:
+            continue
+
+        row = dict(zip(DATA_HEADERS, data_row))
+        key = (
+            str(row.get("Type of paiement") or "").strip(),
+            str(row.get("Employee number") or "").strip(),
+            str(row.get("name employee") or "").strip(),
+            str(row.get("Vendor Company") or "").strip(),
+            str(row.get("Category") or "").strip(),
+        )
+        summary = grouped.setdefault(
+            key,
+            {
+                "rows": 0,
+                "hours": 0.0,
+                "total": 0.0,
+            },
+        )
+        summary["rows"] += 1
+        hours = row.get("total hours worked (number)")
+        total = row.get("Total to pay")
+        if isinstance(hours, (int, float)):
+            summary["hours"] += hours
+        if isinstance(total, (int, float)):
+            summary["total"] += total
+
+    out: list[list[Any]] = []
+    for key, summary in sorted(grouped.items(), key=lambda item: tuple(normalize_lookup_key(part) for part in item[0])):
+        out.append(
+            [
+                key[0],
+                key[1],
+                key[2],
+                key[3],
+                key[4],
+                summary["rows"],
+                round(summary["hours"], 4),
+                round(summary["total"], 2),
+            ]
+        )
+    return out
+
+
+def remove_sheet_if_present(workbook, sheet_name: str) -> None:
+    if sheet_name in workbook.sheetnames:
+        workbook.remove(workbook[sheet_name])
+
+
+def populate_balance_sheet(workbook, sheet_name: str, data_rows: list[list[Any]], hidden: bool = False) -> None:
+    remove_sheet_if_present(workbook, sheet_name)
+    ws = workbook.create_sheet(sheet_name)
+    ws.sheet_state = "hidden" if hidden else "visible"
+
+    for col_index, header in enumerate(BALANCE_HEADERS, start=1):
+        cell = ws.cell(row=1, column=col_index)
+        cell.value = header
+
+    balance_rows = build_balance_rows(data_rows, sheet_name)
+    if not balance_rows:
+        balance_rows = [["", "", "", "", "", 0, 0, 0]]
+
+    for row_index, values in enumerate(balance_rows, start=2):
+        for col_index, value in enumerate(values, start=1):
+            set_cell_value(ws.cell(row=row_index, column=col_index), value)
+
+    for column, width in {
+        "A": 24,
+        "B": 28,
+        "C": 34,
+        "D": 42,
+        "E": 22,
+        "F": 10,
+        "G": 18,
+        "H": 16,
+    }.items():
+        ws.column_dimensions[column].width = width
+
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row=row, column=7).number_format = "0.0000"
+        ws.cell(row=row, column=8).number_format = "0.00"
+
+
+def populate_balance_sheets(workbook, data_rows: list[list[Any]]) -> None:
+    populate_balance_sheet(workbook, PAGOS_PERIODOS_BALANCE_SHEET_NAME, data_rows)
+    populate_balance_sheet(workbook, TICKETS_BALANCE_SHEET_NAME, data_rows)
+    populate_balance_sheet(workbook, BANK_PERIODICS_BALANCE_SHEET_NAME, data_rows, hidden=True)
+
+
 def finalize_workbook_sheets(workbook, generated_sheet_names: list[str]) -> None:
     for sheet_name in list(workbook.sheetnames):
         if sheet_name == WORK98_TEMPLATE_SHEET_NAME or (
-            sheet_name not in generated_sheet_names and sheet_name != DATA_TEMPLATE_SHEET_NAME
+            sheet_name not in generated_sheet_names
+            and sheet_name != DATA_TEMPLATE_SHEET_NAME
+            and sheet_name not in BALANCE_SHEET_NAMES
         ):
             if sheet_name in generated_sheet_names:
                 continue
@@ -1054,7 +1191,12 @@ def build_work98_workbook_bytes(
 
     populate_data_sheet(data_sheet, generated_data_rows)
     finalize_workbook_sheets(workbook, generated_sheet_names)
-    workbook._sheets = [sheet for sheet in workbook._sheets if sheet.title != DATA_TEMPLATE_SHEET_NAME] + [data_sheet]
+    populate_balance_sheets(workbook, generated_data_rows)
+    workbook._sheets = (
+        [sheet for sheet in workbook._sheets if sheet.title not in (*BALANCE_SHEET_NAMES, DATA_TEMPLATE_SHEET_NAME)]
+        + [workbook[PAGOS_PERIODOS_BALANCE_SHEET_NAME], workbook[TICKETS_BALANCE_SHEET_NAME]]
+        + [data_sheet, workbook[BANK_PERIODICS_BALANCE_SHEET_NAME]]
+    )
     workbook.defined_names.clear()
     workbook._external_links = []
     workbook.active = 0
