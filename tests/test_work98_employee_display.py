@@ -1,12 +1,19 @@
 import unittest
+from datetime import datetime
 
 from openpyxl import Workbook
 
 from utils.work98_generator import (
     EMPLOYEE_DATA_NAME_COLUMN,
+    ORANGE_FILL,
+    REVIEW_NO_FILL,
+    REVIEW_YES_FILL,
+    REVIEW_COLUMN,
+    SCHEDULE_END_COLUMN,
     build_data_row,
     employee_display_for_job,
     populate_work98_rows,
+    resolved_work_sheet_end_time,
 )
 
 
@@ -65,6 +72,120 @@ class Work98EmployeeDisplayTests(unittest.TestCase):
         self.assertEqual("Abigail Lucero (Aaron Guzman)", worksheet["C6"].value)
         self.assertEqual("Abigail Lucero", worksheet.cell(6, EMPLOYEE_DATA_NAME_COLUMN).value)
         self.assertEqual("Aaron Guzman", data_row[5])
+
+    def test_out_uses_real_time_when_no_truncation_exists(self):
+        job = {
+            "job_needs_review": 0,
+            "job_end_time": datetime(2026, 7, 24, 2, 20),
+        }
+
+        result = resolved_work_sheet_end_time(job, None)
+
+        self.assertEqual((2026, 7, 23, 22, 20), self._date_time_parts(result))
+
+    def test_out_uses_trimmed_time_when_review_is_no(self):
+        job = {
+            "job_needs_review": 0,
+            "job_trim_end": datetime(2026, 7, 24, 2, 30),
+            "job_end_time": datetime(2026, 7, 24, 2, 40),
+        }
+
+        result = resolved_work_sheet_end_time(job, None)
+
+        self.assertEqual((2026, 7, 23, 22, 30), self._date_time_parts(result))
+
+    def test_out_uses_manual_time_only_when_review_is_no(self):
+        job = {
+            "job_needs_review": 0,
+            "job_manual_end": datetime(2026, 7, 24, 2, 25),
+            "job_trim_end": datetime(2026, 7, 24, 2, 30),
+            "job_end_time": datetime(2026, 7, 24, 2, 40),
+        }
+
+        result = resolved_work_sheet_end_time(job, None)
+
+        self.assertEqual((2026, 7, 23, 22, 25), self._date_time_parts(result))
+
+    def test_out_uses_real_time_when_review_is_yes(self):
+        job = {
+            "job_needs_review": 1,
+            "job_trim_end": datetime(2026, 7, 24, 2, 30),
+            "job_end_time": datetime(2026, 7, 24, 2, 45),
+        }
+
+        result = resolved_work_sheet_end_time(job, None)
+
+        self.assertEqual((2026, 7, 23, 22, 45), self._date_time_parts(result))
+
+    def test_manual_time_does_not_override_real_time_when_review_is_yes(self):
+        job = {
+            "job_needs_review": 1,
+            "job_manual_end": datetime(2026, 7, 24, 2, 25),
+            "job_trim_end": datetime(2026, 7, 24, 2, 30),
+            "job_end_time": datetime(2026, 7, 24, 2, 45),
+        }
+
+        result = resolved_work_sheet_end_time(job, None)
+
+        self.assertEqual((2026, 7, 23, 22, 45), self._date_time_parts(result))
+
+    def test_work_sheet_out_cell_uses_real_time_when_review_is_yes(self):
+        job = {
+            "job_needs_review": 1,
+            "job_manual_end": datetime(2026, 7, 24, 2, 25),
+            "job_trim_end": datetime(2026, 7, 24, 2, 30),
+            "job_end_time": datetime(2026, 7, 24, 2, 45),
+        }
+        worksheet = Workbook().active
+
+        populate_work98_rows(worksheet, [job], {}, {})
+
+        self.assertEqual(
+            (2026, 7, 23, 22, 45),
+            self._date_time_parts(worksheet["E6"].value),
+        )
+
+    def test_work_sheet_colors_scheduled_out_orange_and_review_yes_green(self):
+        job = {
+            "job_needs_review": 1,
+            "job_scheduled_end": datetime(2026, 7, 24, 2, 30),
+        }
+        worksheet = Workbook().active
+
+        populate_work98_rows(worksheet, [job], {}, {})
+
+        self.assertEqual(
+            ORANGE_FILL.fgColor.rgb,
+            worksheet.cell(6, SCHEDULE_END_COLUMN).fill.fgColor.rgb,
+        )
+        self.assertEqual(
+            REVIEW_YES_FILL.fgColor.rgb,
+            worksheet.cell(6, REVIEW_COLUMN).fill.fgColor.rgb,
+        )
+
+    def test_work_sheet_colors_review_no_red(self):
+        worksheet = Workbook().active
+
+        populate_work98_rows(worksheet, [{"job_needs_review": 0}], {}, {})
+
+        self.assertEqual(
+            REVIEW_NO_FILL.fgColor.rgb,
+            worksheet.cell(6, REVIEW_COLUMN).fill.fgColor.rgb,
+        )
+
+    def test_work_sheet_leaves_empty_review_without_a_solid_fill(self):
+        worksheet = Workbook().active
+
+        populate_work98_rows(worksheet, [{"job_needs_review": None}], {}, {})
+
+        self.assertNotEqual(
+            "solid",
+            worksheet.cell(6, REVIEW_COLUMN).fill.fill_type,
+        )
+
+    @staticmethod
+    def _date_time_parts(value):
+        return (value.year, value.month, value.day, value.hour, value.minute)
 
 
 if __name__ == "__main__":

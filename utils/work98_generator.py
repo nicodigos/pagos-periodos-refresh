@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pymysql
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 
 from utils.ms_graph_excel import download_sharepoint_file_bytes, resolve_drive_id
 from utils.pagos_periodos_sync import mysql_connection, parse_pagos_periodos_workbook
@@ -193,6 +194,9 @@ REAL_END_COLUMN = 27
 EMPLOYEE_DATA_NAME_COLUMN = 28
 LAST_WORK98_COLUMN = EMPLOYEE_DATA_NAME_COLUMN
 SCHEDULE_HEADER_ROW = 5
+ORANGE_FILL = PatternFill(fill_type="solid", fgColor="F4B183")
+REVIEW_NO_FILL = PatternFill(fill_type="solid", fgColor="F4CCCC")
+REVIEW_YES_FILL = PatternFill(fill_type="solid", fgColor="D9EAD3")
 
 
 def normalize_lookup_key(value: str) -> str:
@@ -340,6 +344,32 @@ def resolved_job_source_times(
     start_time = convert_job_datetime_to_building_time(first_datetime(job, start_keys), building_timezone)
     end_time = convert_job_datetime_to_building_time(first_datetime(job, end_keys), building_timezone)
     return start_time, end_time
+
+
+def resolved_work_sheet_end_time(
+    job: dict[str, Any],
+    building: dict[str, str] | None,
+) -> datetime | None:
+    building_timezone = resolve_building_timezone(job, building)
+    review_is_no = display_flag(job.get("job_needs_review")) == "No"
+    manual_end = convert_job_datetime_to_building_time(
+        first_datetime(job, JOB_MANUAL_END_TIME_KEYS),
+        building_timezone,
+    )
+    trimmed_end = convert_job_datetime_to_building_time(
+        first_datetime(job, JOB_TRIMMED_END_TIME_KEYS),
+        building_timezone,
+    )
+    real_end = convert_job_datetime_to_building_time(
+        first_datetime(job, JOB_REAL_END_TIME_KEYS),
+        building_timezone,
+    )
+
+    if review_is_no and manual_end is not None:
+        return manual_end
+    if review_is_no:
+        return trimmed_end or real_end
+    return real_end
 
 
 def contractor_display_name(job: dict[str, Any], contractor: dict[str, str] | None) -> str:
@@ -731,6 +761,13 @@ def set_cell_value(cell, value: Any) -> None:
     cell.value = value
 
 
+def apply_review_fill(cell) -> None:
+    if cell.value == "Yes":
+        cell.fill = copy(REVIEW_YES_FILL)
+    elif cell.value == "No":
+        cell.fill = copy(REVIEW_NO_FILL)
+
+
 def clear_work98_line_rows(ws) -> None:
     for row in range(WORK98_LINE_START_ROW, WORK98_LINE_END_ROW + 1):
         for column in range(2, LAST_WORK98_COLUMN + 1):
@@ -862,7 +899,8 @@ def populate_work98_rows(
             continue
         contractor = find_contractor_lookup(job, contractors)
         building = find_building_lookup(job, buildings)
-        start_time, end_time = resolved_job_times(job, building)
+        start_time, _ = resolved_job_times(job, building)
+        end_time = resolved_work_sheet_end_time(job, building)
         scheduled_start_time, scheduled_end_time = resolved_scheduled_job_times(job, building)
         manual_start_time, manual_end_time = resolved_job_source_times(job, building, JOB_MANUAL_START_TIME_KEYS, JOB_MANUAL_END_TIME_KEYS)
         trimmed_start_time, trimmed_end_time = resolved_job_source_times(job, building, JOB_TRIMMED_START_TIME_KEYS, JOB_TRIMMED_END_TIME_KEYS)
@@ -887,6 +925,7 @@ def populate_work98_rows(
         )
         set_cell_value(ws.cell(row=row_number, column=SCHEDULE_START_COLUMN), scheduled_start_time if scheduled_start_time else None)
         set_cell_value(ws.cell(row=row_number, column=SCHEDULE_END_COLUMN), scheduled_end_time if scheduled_end_time else None)
+        ws.cell(row=row_number, column=SCHEDULE_END_COLUMN).fill = copy(ORANGE_FILL)
         ws.cell(row=row_number, column=SCHEDULE_HOURS_COLUMN).value = (
             f'=IF(OR(M{row_number}="",N{row_number}=""),"",IF(((N{row_number}-M{row_number})*24>=6),((N{row_number}-M{row_number})*24)-0.5,((N{row_number}-M{row_number})*24)))'
         )
@@ -900,6 +939,7 @@ def populate_work98_rows(
             f'=IF(OR(Q{row_number}="",Q{row_number}="No",M{row_number}="",D{row_number}=""),"",IF(D{row_number}>M{row_number},"Yes","No"))'
         )
         set_cell_value(ws.cell(row=row_number, column=REVIEW_COLUMN), display_flag(job.get("job_needs_review")))
+        apply_review_fill(ws.cell(row=row_number, column=REVIEW_COLUMN))
         set_cell_value(ws.cell(row=row_number, column=EXPIRED_COLUMN), display_flag(job.get("job_expired")))
         set_cell_value(ws.cell(row=row_number, column=TRIMMED_END_FLAG_COLUMN), display_flag(trimmed_end_time))
         set_cell_value(ws.cell(row=row_number, column=MANUAL_START_COLUMN), manual_start_time)
