@@ -24,6 +24,7 @@ ENV/
 Thumbs.db
 
 # Generated exports and local validation artifacts
+outputs/
 data/*.xlsx
 data/*.csv
 data_comparison/*.xlsx

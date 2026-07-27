@@ -768,6 +768,15 @@ def apply_review_fill(cell) -> None:
         cell.fill = copy(REVIEW_NO_FILL)
 
 
+def payable_hours(start_time: datetime | None, end_time: datetime | None) -> float | None:
+    if start_time is None or end_time is None:
+        return None
+    hours = (end_time - start_time).total_seconds() / 3600
+    if hours >= 6:
+        hours -= 0.5
+    return round(hours, 4)
+
+
 def clear_work98_line_rows(ws) -> None:
     for row in range(WORK98_LINE_START_ROW, WORK98_LINE_END_ROW + 1):
         for column in range(2, LAST_WORK98_COLUMN + 1):
@@ -926,18 +935,22 @@ def populate_work98_rows(
         set_cell_value(ws.cell(row=row_number, column=SCHEDULE_START_COLUMN), scheduled_start_time if scheduled_start_time else None)
         set_cell_value(ws.cell(row=row_number, column=SCHEDULE_END_COLUMN), scheduled_end_time if scheduled_end_time else None)
         ws.cell(row=row_number, column=SCHEDULE_END_COLUMN).fill = copy(ORANGE_FILL)
-        ws.cell(row=row_number, column=SCHEDULE_HOURS_COLUMN).value = (
-            f'=IF(OR(M{row_number}="",N{row_number}=""),"",IF(((N{row_number}-M{row_number})*24>=6),((N{row_number}-M{row_number})*24)-0.5,((N{row_number}-M{row_number})*24)))'
+        scheduled_hours = payable_hours(scheduled_start_time, scheduled_end_time)
+        worked_hours = payable_hours(start_time, end_time)
+        hours_difference = (
+            round(worked_hours - scheduled_hours, 4)
+            if worked_hours is not None and scheduled_hours is not None
+            else None
         )
-        ws.cell(row=row_number, column=SCHEDULE_HOURS_DIFF_COLUMN).value = (
-            f'=IF(OR(G{row_number}="",O{row_number}=""),"",G{row_number}-O{row_number})'
-        )
-        ws.cell(row=row_number, column=ATTENDED_COLUMN).value = (
-            f'=IF(OR(M{row_number}<>"",N{row_number}<>""),IF(OR(D{row_number}<>"",E{row_number}<>""),"Yes","No"),"")'
-        )
-        ws.cell(row=row_number, column=LATE_COLUMN).value = (
-            f'=IF(OR(Q{row_number}="",Q{row_number}="No",M{row_number}="",D{row_number}=""),"",IF(D{row_number}>M{row_number},"Yes","No"))'
-        )
+        has_schedule = scheduled_start_time is not None or scheduled_end_time is not None
+        attended = "Yes" if has_schedule and (start_time is not None or end_time is not None) else ("No" if has_schedule else None)
+        late = None
+        if attended == "Yes" and start_time is not None and scheduled_start_time is not None:
+            late = "Yes" if start_time > scheduled_start_time else "No"
+        set_cell_value(ws.cell(row=row_number, column=SCHEDULE_HOURS_COLUMN), scheduled_hours)
+        set_cell_value(ws.cell(row=row_number, column=SCHEDULE_HOURS_DIFF_COLUMN), hours_difference)
+        set_cell_value(ws.cell(row=row_number, column=ATTENDED_COLUMN), attended)
+        set_cell_value(ws.cell(row=row_number, column=LATE_COLUMN), late)
         set_cell_value(ws.cell(row=row_number, column=REVIEW_COLUMN), display_flag(job.get("job_needs_review")))
         apply_review_fill(ws.cell(row=row_number, column=REVIEW_COLUMN))
         set_cell_value(ws.cell(row=row_number, column=EXPIRED_COLUMN), display_flag(job.get("job_expired")))

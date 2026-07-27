@@ -8,8 +8,12 @@ from utils.work98_generator import (
     ORANGE_FILL,
     REVIEW_NO_FILL,
     REVIEW_YES_FILL,
+    ATTENDED_COLUMN,
+    LATE_COLUMN,
     REVIEW_COLUMN,
     SCHEDULE_END_COLUMN,
+    SCHEDULE_HOURS_COLUMN,
+    SCHEDULE_HOURS_DIFF_COLUMN,
     build_data_row,
     employee_display_for_job,
     populate_work98_rows,
@@ -182,6 +186,32 @@ class Work98EmployeeDisplayTests(unittest.TestCase):
             "solid",
             worksheet.cell(6, REVIEW_COLUMN).fill.fill_type,
         )
+
+    def test_schedule_validation_columns_contain_values_not_uncalculated_formulas(self):
+        job = {
+            "job_needs_review": 0,
+            "job_start_time": datetime(2026, 7, 21, 10, 23, 44),
+            "job_end_time": datetime(2026, 7, 21, 19, 3, 46),
+            "job_trim_start": datetime(2026, 7, 21, 11, 0),
+            "job_trim_end": datetime(2026, 7, 21, 19, 0),
+            "job_scheduled_start": datetime(2026, 7, 21, 11, 0),
+            "job_scheduled_end": datetime(2026, 7, 21, 19, 0),
+        }
+        worksheet = Workbook().active
+
+        populate_work98_rows(worksheet, [job], {}, {})
+
+        self.assertEqual(7.5, worksheet.cell(6, SCHEDULE_HOURS_COLUMN).value)
+        self.assertEqual(0.0, worksheet.cell(6, SCHEDULE_HOURS_DIFF_COLUMN).value)
+        self.assertEqual("Yes", worksheet.cell(6, ATTENDED_COLUMN).value)
+        self.assertEqual("No", worksheet.cell(6, LATE_COLUMN).value)
+        for column in (
+            SCHEDULE_HOURS_COLUMN,
+            SCHEDULE_HOURS_DIFF_COLUMN,
+            ATTENDED_COLUMN,
+            LATE_COLUMN,
+        ):
+            self.assertNotEqual("f", worksheet.cell(6, column).data_type)
 
     @staticmethod
     def _date_time_parts(value):
